@@ -41,6 +41,69 @@ void pyDecRef(PyObject* pyObj)
 }
 
 /**
+ * @brief Ask the PHAL plugin to format entity paths in a display copy of JSON.
+ *
+ * Builtin JSON sections use the logging component ID, so they do not normally
+ * reach a component parser. The optional PHAL formatter only changes their
+ * presentation. Missing or incompatible plugins leave the original JSON intact.
+ */
+orderedJSON formatJSONEntityPaths(const orderedJSON& json)
+{
+    if (!Py_IsInitialized())
+    {
+        return json;
+    }
+
+    using PyPtr = std::unique_ptr<PyObject, decltype(&pyDecRef)>;
+    PyPtr module(PyImport_ImportModule("udparsers.o3000.entitypath"), &pyDecRef);
+    if (!module)
+    {
+        PyErr_Clear();
+        return json;
+    }
+    PyPtr function(PyObject_GetAttrString(module.get(), "formatJSON"), &pyDecRef);
+    if (!function || !PyCallable_Check(function.get()))
+    {
+        PyErr_Clear();
+        return json;
+    }
+    auto input = json.dump();
+    PyPtr argument(PyUnicode_FromStringAndSize(input.data(), input.size()),
+                   &pyDecRef);
+    if (!argument)
+    {
+        PyErr_Clear();
+        return json;
+    }
+    PyPtr result(PyObject_CallFunctionObjArgs(function.get(), argument.get(),
+                                             nullptr),
+                 &pyDecRef);
+    if (!result || !PyUnicode_Check(result.get()))
+    {
+        PyErr_Clear();
+        return json;
+    }
+    Py_ssize_t length{};
+    const char* output = PyUnicode_AsUTF8AndSize(result.get(), &length);
+    if (!output)
+    {
+        PyErr_Clear();
+        return json;
+    }
+    try
+    {
+        auto formatted = orderedJSON::parse(output, output + length);
+        if (formatted.type() == json.type())
+        {
+            return formatted;
+        }
+    }
+    catch (const std::exception&)
+    {}
+    return json;
+}
+
+/**
  * @brief Returns a JSON string for use by PEL::printSectionInJSON().
  *
  * The returning string will contain a JSON object, but without
@@ -110,7 +173,8 @@ std::string prettyJSON(uint16_t componentID, uint8_t subType, uint8_t version,
  * @return std::string - The JSON string
  */
 std::string getCBORJSON(uint16_t componentID, uint8_t subType, uint8_t version,
-                        uint8_t creatorID, const std::vector<uint8_t>& data)
+                        uint8_t creatorID, const std::vector<uint8_t>& data,
+                        bool formatEntityPaths)
 {
     // The CBOR parser needs the pad bytes added to 4 byte align
     // removed.  The number of bytes added to the pad is on the
@@ -132,6 +196,10 @@ std::string getCBORJSON(uint16_t componentID, uint8_t subType, uint8_t version,
     }
 
     orderedJSON json = orderedJSON::from_cbor(cborData);
+    if (formatEntityPaths)
+    {
+        json = formatJSONEntityPaths(json);
+    }
 
     return prettyJSON(componentID, subType, version, creatorID, json);
 }
@@ -203,7 +271,7 @@ std::string getTextJSON(uint16_t componentID, uint8_t subType, uint8_t version,
  */
 std::optional<std::string> getBuiltinFormatJSON(
     uint16_t componentID, uint8_t subType, uint8_t version,
-    const std::vector<uint8_t>& data, uint8_t creatorID)
+    const std::vector<uint8_t>& data, uint8_t creatorID, bool formatEntityPaths)
 {
     switch (subType)
     {
@@ -212,12 +280,17 @@ std::optional<std::string> getBuiltinFormatJSON(
             std::string jsonString{data.begin(), data.begin() + data.size()};
 
             orderedJSON json = orderedJSON::parse(jsonString);
+            if (formatEntityPaths)
+            {
+                json = formatJSONEntityPaths(json);
+            }
 
             return prettyJSON(componentID, subType, version, creatorID, json);
         }
         case static_cast<uint8_t>(UserDataFormat::cbor):
         {
-            return getCBORJSON(componentID, subType, version, creatorID, data);
+            return getCBORJSON(componentID, subType, version, creatorID, data,
+                               formatEntityPaths);
         }
         case static_cast<uint8_t>(UserDataFormat::text):
         {
@@ -412,7 +485,9 @@ std::optional<std::string> getJSON(
             componentID == static_cast<uint16_t>(ComponentID::phosphorLogging))
         {
             return getBuiltinFormatJSON(componentID, subType, version, data,
-                                        creatorID);
+                                        creatorID,
+                                        std::find(plugins.begin(), plugins.end(),
+                                                  "o3000") != plugins.end());
         }
         else if (std::find(plugins.begin(), plugins.end(),
                            subsystem + component) != plugins.end())

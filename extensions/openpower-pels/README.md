@@ -648,6 +648,18 @@ setup(
         return jsonStr
 ```
 
+When the PHAL `o3000` plugin is installed, builtin JSON and CBOR User Data
+sections can also display packed `EntityPath` arrays as readable paths. The
+optional `udparsers.o3000.entitypath.formatJSON` function takes and returns a
+JSON string. For example, the physical path array
+`[38,1,0,2,0,90,0,87,0,89,0,68,0]` is displayed as
+`/sys-0/node-0/backplane-0/proc_module-0/hub_chip-0/mc-0`.
+
+This formatting applies when displaying existing and new PELs. Stored bytes,
+guard and deconfiguration data, and section ownership stay unchanged. Missing
+formatters, invalid paths, and unsupported target types retain their original
+JSON representation.
+
 - SRC parser module
   - Module name: `xsrc.py`, where `x` is the Creator Subsystem from the Private
     Header section (in ASCII, converted to lowercase).

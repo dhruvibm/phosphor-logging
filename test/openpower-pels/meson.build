@@ -53,6 +53,7 @@ openpower_pels = {
     'src_callouts': {},
     'stream': {},
     'user_data': {},
+    'user_data_json': {},
     'user_header': {},
     'temporary_file': {
         'sources': ['../../extensions/openpower-pels/temporary_file.cpp'],
